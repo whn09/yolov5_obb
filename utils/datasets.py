@@ -430,6 +430,10 @@ class LoadImagesAndLabels(Dataset):
         except:
             cache, exists = self.cache_labels(cache_path, prefix), False  # cache
 
+        # print('self.img_files:', len(self.img_files), self.img_files[:5])
+        # print('self.label_files:', len(self.label_files), self.label_files[:5])
+        # print('cache:', cache)
+
         # Display cache
         nf, nm, ne, nc, n = cache.pop('results')  # found, missing, empty, corrupted, total
         if exists:
@@ -447,7 +451,7 @@ class LoadImagesAndLabels(Dataset):
         self.img_files = list(cache.keys())  # update
         self.label_files = img2label_paths(cache.keys())  # update
         n = len(shapes)  # number of images
-        bi = np.floor(np.arange(n) / batch_size).astype(np.int)  # batch index
+        bi = np.floor(np.arange(n) / batch_size).astype(int)  # batch index
         nb = bi[-1] + 1  # number of batches
         self.batch = bi  # batch index of image
         self.n = n
@@ -489,7 +493,7 @@ class LoadImagesAndLabels(Dataset):
                 elif mini > 1: # batch图像高宽比均大于1时, shape=[1, w/h] = [h_ratio, w_ratio]
                     shapes[i] = [1, 1 / mini]
 
-            self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(np.int) * stride # (nb, [h_rect, w_rect])
+            self.batch_shapes = np.ceil(np.array(shapes) * img_size / stride + pad).astype(int) * stride # (nb, [h_rect, w_rect])
 
         # Cache images into memory for faster training (WARNING: large datasets may exceed system RAM)
         self.imgs, self.img_npy = [None] * n, [None] * n
@@ -915,7 +919,7 @@ def extract_boxes(path='../datasets/coco128'):  # from utils.datasets import *; 
                     b = x[1:] * [w, h, w, h]  # box
                     # b[2:] = b[2:].max()  # rectangle to square
                     b[2:] = b[2:] * 1.2 + 3  # pad
-                    b = xywh2xyxy(b.reshape(-1, 4)).ravel().astype(np.int)
+                    b = xywh2xyxy(b.reshape(-1, 4)).ravel().astype(int)
 
                     b[[0, 2]] = np.clip(b[[0, 2]], 0, w)  # clip boxes outside of image
                     b[[1, 3]] = np.clip(b[[1, 3]], 0, h)
@@ -950,62 +954,63 @@ def verify_image_label(args):
     # Verify one image-label pair
     im_file, lb_file, prefix, cls_name_list = args
     nm, nf, ne, nc, msg, segments = 0, 0, 0, 0, '', []  # number (missing, found, empty, corrupt), message, segments
-    try:
-        # verify images
-        im = Image.open(im_file)
-        im.verify()  # PIL verify
-        shape = exif_size(im)  # image size
-        assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
-        assert im.format.lower() in IMG_FORMATS, f'invalid image format {im.format}'
-        if im.format.lower() in ('jpg', 'jpeg'):
-            with open(im_file, 'rb') as f:
-                f.seek(-2, 2)
-                if f.read() != b'\xff\xd9':  # corrupt JPEG
-                    ImageOps.exif_transpose(Image.open(im_file)).save(im_file, 'JPEG', subsampling=0, quality=100)
-                    msg = f'{prefix}WARNING: {im_file}: corrupt JPEG restored and saved'
+    # try:
+    # verify images
+    im = Image.open(im_file)
+    im.verify()  # PIL verify
+    shape = exif_size(im)  # image size
+    assert (shape[0] > 9) & (shape[1] > 9), f'image size {shape} <10 pixels'
+    assert im.format.lower() in IMG_FORMATS, f'invalid image format {im.format}'
+    if im.format.lower() in ('jpg', 'jpeg'):
+        with open(im_file, 'rb') as f:
+            f.seek(-2, 2)
+            if f.read() != b'\xff\xd9':  # corrupt JPEG
+                ImageOps.exif_transpose(Image.open(im_file)).save(im_file, 'JPEG', subsampling=0, quality=100)
+                msg = f'{prefix}WARNING: {im_file}: corrupt JPEG restored and saved'
 
-        # verify labels
-        if os.path.isfile(lb_file):
-            nf = 1  # label found
-            with open(lb_file) as f:
-                labels = [x.split() for x in f.read().strip().splitlines() if len(x)]
+    # verify labels
+    if os.path.isfile(lb_file):
+        nf = 1  # label found
+        with open(lb_file) as f:
+            labels = [x.split() for x in f.read().strip().splitlines() if len(x)]
 
-                # Yolov5-obb does not support segment labels yet
-                # if any([len(x) > 8 for x in l]):  # is segment
-                #     classes = np.array([x[0] for x in l], dtype=np.float32)
-                #     segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
-                #     l = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
-                l_ = []
-                for label in labels:
-                    if label[-1] == "2": # diffcult
-                        continue
-                    cls_id = cls_name_list.index(label[8])
-                    l_.append(np.concatenate((cls_id, label[:8]), axis=None))
-                l = np.array(l_, dtype=np.float32)
-            nl = len(l)
-            if nl:
-                assert len(label) == 10, f'Yolov5-OBB labels require 10 columns, which same as DOTA Dataset, {len(label)} columns detected'
-                assert (l >= 0).all(), f'negative label values {l[l < 0]}, please check your dota format labels'
-                #assert (l[:, 1:] <= 1).all(), f'non-normalized or out of bounds coordinates {l[:, 1:][l[:, 1:] > 1]}'
-                _, i = np.unique(l, axis=0, return_index=True)
-                if len(i) < nl:  # duplicate row check
-                    l = l[i]  # remove duplicates
-                    if segments:
-                        segments = segments[i]
-                    msg = f'{prefix}WARNING: {im_file}: {nl - len(i)} duplicate labels removed'
-            else:
-                ne = 1  # label empty
-                # l = np.zeros((0, 5), dtype=np.float32)
-                l = np.zeros((0, 9), dtype=np.float32)
+            # Yolov5-obb does not support segment labels yet
+            # if any([len(x) > 8 for x in l]):  # is segment
+            #     classes = np.array([x[0] for x in l], dtype=np.float32)
+            #     segments = [np.array(x[1:], dtype=np.float32).reshape(-1, 2) for x in l]  # (cls, xy1...)
+            #     l = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+            l_ = []
+            for label in labels:
+                if label[-1] == "2": # diffcult
+                    continue
+                # cls_id = cls_name_list.index(label[8])
+                cls_id = np.array([cls_name_list[label[8]]])
+                l_.append(np.concatenate((cls_id, label[:8]), axis=None))
+            l = np.array(l_, dtype=np.float32)
+        nl = len(l)
+        if nl:
+            assert len(label) == 10, f'Yolov5-OBB labels require 10 columns, which same as DOTA Dataset, {len(label)} columns detected'
+            assert (l >= 0).all(), f'negative label values {l[l < 0]}, please check your dota format labels'
+            #assert (l[:, 1:] <= 1).all(), f'non-normalized or out of bounds coordinates {l[:, 1:][l[:, 1:] > 1]}'
+            _, i = np.unique(l, axis=0, return_index=True)
+            if len(i) < nl:  # duplicate row check
+                l = l[i]  # remove duplicates
+                if segments:
+                    segments = segments[i]
+                msg = f'{prefix}WARNING: {im_file}: {nl - len(i)} duplicate labels removed'
         else:
-            nm = 1  # label missing
+            ne = 1  # label empty
             # l = np.zeros((0, 5), dtype=np.float32)
             l = np.zeros((0, 9), dtype=np.float32)
-        return im_file, l, shape, segments, nm, nf, ne, nc, msg
-    except Exception as e:
-        nc = 1
-        msg = f'{prefix}WARNING: {im_file}: ignoring corrupt image/label: {e}'
-        return [None, None, None, None, nm, nf, ne, nc, msg]
+    else:
+        nm = 1  # label missing
+        # l = np.zeros((0, 5), dtype=np.float32)
+        l = np.zeros((0, 9), dtype=np.float32)
+    return im_file, l, shape, segments, nm, nf, ne, nc, msg
+    # except Exception as e:
+    #     nc = 1
+    #     msg = f'{prefix}WARNING: {im_file}: ignoring corrupt image/label: {e}'
+    #     return [None, None, None, None, nm, nf, ne, nc, msg]
 
 
 def dataset_stats(path='coco128.yaml', autodownload=False, verbose=False, profile=False, hub=False):

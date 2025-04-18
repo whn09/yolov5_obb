@@ -159,13 +159,16 @@ def run(data,
     niou = iouv.numel()
 
     names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    reverse_names = {v: k for k, v in names.items()}
+    print('names:', names)
+    print('reverse_names:', reverse_names)
     # Dataloader
     if not training:
         model.warmup(imgsz=(1, 3, imgsz, imgsz), half=half)  # warmup
         pad = 0.0 if task == 'speed' else 0.5
         task = task if task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-        dataloader = create_dataloader(data[task], imgsz, batch_size, stride, names, single_cls, pad=pad, rect=pt,
-                                       workers=workers, prefix=colorstr(f'{task}: '))[0]
+        dataloader = create_dataloader(data[task], imgsz, batch_size, stride, reverse_names, single_cls, pad=pad, rect=pt,
+                                       workers=workers, prefix=colorstr(f'{task}: '))[0]  # TODO: use reverse_names instead of names
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
